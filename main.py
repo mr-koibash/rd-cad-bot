@@ -57,7 +57,6 @@ class TelegramBot:
         self.register_handlers()
 
     def register_handlers(self):
-        # Регистрация обработчиков команд
         @self.bot.message_handler(commands=['start'])
         def start(message):
             self.send_welcome(message)
@@ -66,9 +65,18 @@ class TelegramBot:
         def help(message):
             self.send_help(message)
 
+        @self.bot.message_handler(commands=['clear'])
+        def clear_dialog(message):
+            self.clear_dialog(message)
+
         @self.bot.message_handler()
         def dialog_message(message):
             self.reply(message)
+
+    def clear_dialog(self, message):
+        self._repositories.user_messages.delete_user_messages(message.from_user.id)
+        self.bot.reply_to(message, 'История диалога успешно удалена. Я всё забыл...')
+
 
     def send_welcome(self, message):
         self._logger.info(f'User {message.from_user.id} joined.')
@@ -82,7 +90,7 @@ class TelegramBot:
             self.bot.reply_to(message, 'Наша работа уже начата и идёт полным ходом!')
 
     def send_help(self, message):
-        self.bot.reply_to(message, 'Доступные команды:\n/start - Начать\n/help - Помощь')
+        self.bot.reply_to(message, 'Доступные команды:\n/start - Начать\n/help - Помощь\n/clear - Очистить контекст')
 
     def reply(self, message):
         self._logger.info(f'Input message - user id: {message.from_user.id}, message: {message.text}')
@@ -93,6 +101,8 @@ class TelegramBot:
         messages = [{'role': 'system', 'content': cad_prompt + f'\n\nТекущее время: {current_date_time}'}]
 
         dialog = self._repositories.user_messages.get_user_messages(message.from_user.id)
+        if dialog is None:
+            dialog = []
         for dialog_message in reversed(dialog):
             role = 'user' if dialog_message.is_user_input else 'assistant'
             messages.append({'role': role, 'content': dialog_message.message})

@@ -48,3 +48,9 @@ class UserDialogRepository:
         rows = self._db.execute_query(query, (user_id, limit))
         if rows:
             return [UserDialog.from_db_row(row) for row in rows]
+
+    def delete_user_messages(self, user_id: int) -> None:
+        query = (
+            'DELETE FROM telegram_user_dialog WHERE user_id = %s;'
+        )
+        self._db.execute_update_query(query, (user_id,))
