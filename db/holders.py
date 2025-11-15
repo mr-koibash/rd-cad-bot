@@ -1,6 +1,7 @@
 from configparser import SectionProxy
 
 from db.managers import PsqlDatabaseManager
+from db.migration.manager import MigrationManager
 from db.repositories import UsersRepository, UserDialogRepository
 
 class DbRepositoriesHolder:
@@ -14,6 +15,9 @@ class DbRepositoriesHolder:
             db_config['minimum_pool_size'],
             db_config['maximum_pool_size']
         )
+
+        migration_manager = MigrationManager(db)
+        migration_manager.migrate()
 
         self.users = UsersRepository(db, app_name=app_name)
         self.user_messages = UserDialogRepository(db, app_name=app_name)
