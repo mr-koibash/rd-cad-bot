@@ -97,11 +97,11 @@ class LongTermMemory:
 
         context_parts = []
         for i, doc in enumerate(results['documents'][0], 1):
-            context_parts.append(f"[Память {i}]\n{doc}")
+            context_parts.append(f"[Воспоминание {i}]\n{doc}")
 
-        context = "=== Некоторые твои сообщения с пользователем ранее написаны ниже ===\n\n"
+        context = "=== Несколько сообщений твоего предыдущего диалога с пользователем (ты - Assistant, пользователь - User) ===\n\n"
         context += "\n\n".join(context_parts)
-        context += "\n\n=== Конец сообщений ==="
+        context += "\n\n=== Конец сообщений предыдущего диалога ==="
 
         self._logger.debug(f"Found {len(results['documents'][0])} relevant memories")
 

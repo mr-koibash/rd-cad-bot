@@ -7,10 +7,12 @@ class User:
     id: int
     first_name: str
     created_at: datetime
+    summary: str
+    unsummated_messages_counter: int
 
     @classmethod
     def from_db_row(cls, row):
-        return cls(id=row[0], first_name=row[1], created_at=row[2])
+        return cls(id=row[0], first_name=row[1], created_at=row[2], summary=row[3], unsummated_messages_counter=row[4])
 
 
 @dataclass

@@ -3,6 +3,7 @@ from configparser import ConfigParser
 
 from ai.llm import Llm
 from ai.long_term_memory import LongTermMemory
+from ai.summarizer import DialogSummarizer
 from bot import TelegramBot
 from db.holders import DbRepositoriesHolder
 from services.service_locator import ServiceLocator
@@ -21,13 +22,17 @@ if __name__ == '__main__':
     repositories = DbRepositoriesHolder('main main main', db_config)
     service_locator.add(DbRepositoriesHolder.__name__, repositories)
 
+    # ai
+    llm = Llm(service_locator)
+    service_locator.add(Llm.__name__, llm)
+
     # RAG
     long_term_memory = LongTermMemory(db_path=".chroma_memory")
     service_locator.add(LongTermMemory.__name__, long_term_memory)
 
-    # ai
-    llm = Llm(service_locator)
-    service_locator.add(Llm.__name__, llm)
+    # summarizer
+    summarizer = DialogSummarizer(llm)
+    service_locator.add(DialogSummarizer.__name__, summarizer)
 
     # bot
     bot = TelegramBot(service_locator)
