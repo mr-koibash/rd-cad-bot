@@ -11,7 +11,7 @@ class LongTermMemory:
     Stores conversation history and finds relevant memories
     """
 
-    def __init__(self, db_path: str = "./chroma_memory"):
+    def __init__(self, db_path: str = "./.chroma_memory"):
         self._logger = ConsoleLogger(LongTermMemory.__name__, logging.INFO)
 
         # Init ChromaDB

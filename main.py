@@ -22,7 +22,7 @@ if __name__ == '__main__':
     service_locator.add(DbRepositoriesHolder.__name__, repositories)
 
     # RAG
-    long_term_memory = LongTermMemory(db_path="./chroma_memory")
+    long_term_memory = LongTermMemory(db_path=".chroma_memory")
     service_locator.add(LongTermMemory.__name__, long_term_memory)
 
     # ai
