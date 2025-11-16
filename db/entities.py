@@ -19,8 +19,9 @@ class User:
 class UserDialog:
     message: str
     is_user_input: bool
+    type: str
     created_at: datetime
 
     @classmethod
     def from_db_row(cls, row):
-        return cls(message=row[0], is_user_input=row[1], created_at=row[2])
+        return cls(message=row[0], is_user_input=row[1], type=row[2], created_at=row[3])

@@ -1,0 +1,2 @@
+ALTER TABLE telegram_user_dialog
+    ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'TEXT';

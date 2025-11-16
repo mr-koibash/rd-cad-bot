@@ -1,6 +1,7 @@
 import logging
 from configparser import ConfigParser
 from datetime import datetime
+from pathlib import Path
 
 import telebot
 
@@ -11,6 +12,7 @@ from ai.summarizer import DialogSummarizer
 from db.holders import DbRepositoriesHolder
 from logger.console import ConsoleLogger
 from services.service_locator import ServiceLocator
+from utilities.file_utils import FileUtils
 
 
 class TelegramBot:
@@ -26,6 +28,7 @@ class TelegramBot:
 
         # bot initialize
         self.bot = telebot.TeleBot(self._config['Telegram']['token'])
+        self._media_directory = self._config['Telegram']['media_directory']
         self.register_handlers()
 
     def register_handlers(self):
@@ -48,6 +51,10 @@ class TelegramBot:
         @self.bot.message_handler(commands=['summary'])
         def show_summary(message):
             self.show_summary(message)
+
+        @self.bot.message_handler(content_types=['photo'])
+        def handle_photo(message):
+            self.process_photo(message)
 
         @self.bot.message_handler()
         def dialog_message(message):
@@ -92,19 +99,60 @@ class TelegramBot:
                                    '/stats - Статистика памяти\n'
                                    '/summary - Показать резюме диалога')
 
-    def reply(self, message):
+    def process_photo(self, message):
+        """Обработка изображений от пользователя"""
         user_id = message.from_user.id
 
-        self._logger.info(f'Input message - user id: {user_id}, message: {message.text}')
-        self._repositories.user_messages.add_user_message(user_id, message.text, is_user_input=True)
+        # Получаем фото лучшего качества (последнее в списке)
+        photo = message.photo[-1]
+
+        try:
+            file_info = self.bot.get_file(photo.file_id)
+            downloaded_file = self.bot.download_file(file_info.file_path)
+
+            dir = f'{self._media_directory}/{user_id}'
+            Path(dir).mkdir(parents=True, exist_ok=True)
+            file_path = f'{dir}/{photo.file_id}.jpg'
+
+            with open(file_path, 'wb') as new_file:
+                new_file.write(downloaded_file)
+
+            self._logger.info(f'Image saved to {file_path}')
+
+            uri = FileUtils.image_to_base64_data_uri(file_path)
+
+            user_id = message.from_user.id
+            message_text = message.caption if message.caption is not None else 'Опиши это изображение'
+            self._process_message(user_id, message_text, is_photo_available=True, uri=uri)
+
+        except Exception as e:
+            self._logger.error(f"Error processing image: {e}")
+            self.bot.reply_to(
+                message,
+                "😔 Извините, произошла ошибка при обработке изображения. "
+                "Убедитесь, что vision модель правильно настроена."
+            )
+
+        a = 5
+
+    def reply(self, message):
+        user_id = message.from_user.id
+        message_text = message.text
+        self._process_message(user_id, message_text)
+
+    def _process_message(self, user_id: int, message_text: str, is_photo_available: bool = False, uri: str = ""):
+        self._logger.info(f'Input message - user id: {user_id}, message: {message_text}')
+        if is_photo_available:
+            self._repositories.user_messages.add_user_message(user_id, uri, is_user_input=True, message_type='IMAGE')
+        self._repositories.user_messages.add_user_message(user_id, message_text, is_user_input=True)
 
         user = self._repositories.users.get_user(user_id)
         current_summary = user.summary
 
         # get relevant context from long-term memory
         long_term_context = self._long_term_memory.get_relevant_context(
-            user_id=message.from_user.id,
-            query=message.text,
+            user_id=user_id,
+            query=message_text,
             n_results=3  # top-3 relevant memories
         )
 
@@ -112,33 +160,36 @@ class TelegramBot:
         current_date_time = datetime.now().strftime('%d %B %Y, %H:%M MSK')
         system_prompt = cad_prompt + f'\n\nТекущее время: {current_date_time}\n'
         # add summary
-        system_prompt += f'КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩИХ ДИАЛОГОВ: {current_summary}\n\n'
+        system_prompt += f'КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩИХ ДИАЛОГОВ\n\n {current_summary}\n\n'
         # add RAG
         if long_term_context:
             system_prompt += 'Ниже твои воспоминания из прошлого диалога с пользователем. Учти эти сообщения, если они релевантны запросу пользователя:'
             system_prompt += f'\n\n{long_term_context}\n\n'
         messages = [{'role': 'system', 'content': system_prompt}]
         # add short-term memory (latest N messages)
-        dialog = self._repositories.user_messages.get_user_messages(message.from_user.id)
+        dialog = self._repositories.user_messages.get_user_messages(user_id)
         if dialog is None:
             dialog = []
         for dialog_message in reversed(dialog):
             role = 'user' if dialog_message.is_user_input else 'assistant'
-            messages.append({'role': role, 'content': dialog_message.message})
+            if dialog_message.type == 'TEXT':
+                messages.append({'role': role, 'content': [{'type': 'text', 'text': dialog_message.message}]})
+            if dialog_message.type == 'IMAGE':
+                messages.append({'role': role, 'content': [{'type': 'image_url', 'image_url': dialog_message.message}]})
 
         # generate response
         response = self._llm.generate(messages)
         self._logger.info(f'Bot\'s response: {response}')
 
         # save response to long-term (RAG) and short-term (DB) memory
-        self._repositories.user_messages.add_user_message(message.from_user.id, response, is_user_input=False)
+        self._repositories.user_messages.add_user_message(user_id, response, is_user_input=False)
         self._long_term_memory.save_interaction(
-            user_id=message.from_user.id,
-            user_message=message.text,
+            user_id=user_id,
+            user_message=message_text,
             bot_response=response,
             metadata={
                 'timestamp': current_date_time,
-                'message_length': len(message.text)
+                'message_length': len(message_text)
             }
         )
 
@@ -170,7 +221,7 @@ class TelegramBot:
         self._repositories.users.update_unsummated_counter_by_id(user_id, unsummated_messages_counter)
 
         # send response to user
-        self.bot.send_message(message.chat.id, response)
+        self.bot.send_message(user_id, response)
 
     def run(self):
         self._logger.info(f'AI CAD helper bot started')

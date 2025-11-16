@@ -27,11 +27,11 @@ if __name__ == '__main__':
     service_locator.add(Llm.__name__, llm)
 
     # RAG
-    long_term_memory = LongTermMemory(db_path=".chroma_memory")
+    long_term_memory = LongTermMemory(db_path=config['LongTermMemory']['chroma_directory'])
     service_locator.add(LongTermMemory.__name__, long_term_memory)
 
     # summarizer
-    summarizer = DialogSummarizer(llm)
+    summarizer = DialogSummarizer(llm, config)
     service_locator.add(DialogSummarizer.__name__, summarizer)
 
     # bot

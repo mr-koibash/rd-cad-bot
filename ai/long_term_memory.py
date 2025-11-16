@@ -99,9 +99,9 @@ class LongTermMemory:
         for i, doc in enumerate(results['documents'][0], 1):
             context_parts.append(f"[Воспоминание {i}]\n{doc}")
 
-        context = "=== Несколько сообщений твоего предыдущего диалога с пользователем (ты - Assistant, пользователь - User) ===\n\n"
+        context = "=== Избранные сообщения из твоего предыдущего диалога с пользователем (ты - Assistant, пользователь - User) ===\n\n"
         context += "\n\n".join(context_parts)
-        context += "\n\n=== Конец сообщений предыдущего диалога ==="
+        context += "\n\n=== Конец избранных сообщений твоего предыдущего диалога ==="
 
         self._logger.debug(f"Found {len(results['documents'][0])} relevant memories")
 

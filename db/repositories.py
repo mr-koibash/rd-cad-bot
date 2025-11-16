@@ -62,16 +62,16 @@ class UserDialogRepository:
     def __init__(self, db: PsqlDatabaseManager, *args, **kwargs):
         self._db = db
 
-    def add_user_message(self, user_id: int, message: str, is_user_input: bool):
+    def add_user_message(self, user_id: int, message: str, is_user_input: bool, message_type: str = 'TEXT'):
         query = (
-            'INSERT INTO telegram_user_dialog (user_id, message, is_user_input, created_at) '
-            'VALUES (%s, %s, %s, CURRENT_TIMESTAMP);'
+            'INSERT INTO telegram_user_dialog (user_id, message, is_user_input, type, created_at) '
+            'VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP);'
         )
-        self._db.execute_update_query(query, (user_id, message, is_user_input))
+        self._db.execute_update_query(query, (user_id, message, is_user_input, message_type))
 
     def get_user_messages(self, user_id: int, limit: int = 10) -> list[UserDialog] | None:
         query = (
-            'SELECT message, is_user_input, created_at '
+            'SELECT message, is_user_input, type, created_at '
             'FROM telegram_user_dialog '
             'WHERE user_id = %s '
             'ORDER BY created_at DESC '

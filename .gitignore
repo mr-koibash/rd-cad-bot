@@ -212,3 +212,4 @@ config.ini
 notes.txt
 chroma_memory/
 .chroma_memory/
+.media

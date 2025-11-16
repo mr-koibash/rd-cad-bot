@@ -1,4 +1,5 @@
 import logging
+from configparser import ConfigParser
 from typing import List, Dict
 
 from ai.prompts import summary_prompt
@@ -12,13 +13,13 @@ class DialogSummarizer:
     Periodically condenses a story into a short summary
     """
 
-    def __init__(self, llm: Llm):
+    def __init__(self, llm: Llm, config: ConfigParser):
         self._llm = llm
         self._logger = ConsoleLogger(DialogSummarizer.__name__, logging.INFO)
 
         # Settings
-        self.MESSAGES_PER_SUMMARY = 15  # Create summary every 20 messages
-        self.MAX_SUMMARY_LENGTH = 500  # Maximum summary length in words
+        self.MESSAGES_PER_SUMMARY = int(config['LongTermMemory']['messages_per_summary'])  # Create summary every N messages
+        self.MAX_SUMMARY_LENGTH = int(config['LongTermMemory']['maximum_summary_length'])  # Maximum summary length in words
 
     def create_summary(self, messages: List[Dict], existing_summary: str = None) -> str:
         """
