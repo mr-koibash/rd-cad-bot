@@ -5,9 +5,13 @@ from pathlib import Path
 
 import telebot
 
+from ai.agent.loop import AgentLoop
+from ai.agent.prompts import build_agent_system_prompt
+from ai.agent.registry import ToolRegistry
+from ai.agent.tool_base import ToolContext
 from ai.llm import Llm
 from ai.long_term_memory import LongTermMemory
-from ai.prompts import cad_prompt, ai_friend_prompt
+from ai.prompts import cad_prompt
 from ai.summarizer import DialogSummarizer
 from db.holders import DbRepositoriesHolder
 from logger.console import ConsoleLogger
@@ -22,6 +26,12 @@ class TelegramBot:
         self._llm: Llm = service_locator.get(Llm.__name__)
         self._long_term_memory: LongTermMemory = service_locator.get(LongTermMemory.__name__)
         self._summarizer: DialogSummarizer = service_locator.get(DialogSummarizer.__name__)
+        self._agent: AgentLoop = service_locator.get(AgentLoop.__name__)
+        self._tool_registry: ToolRegistry = service_locator.get(ToolRegistry.__name__)
+
+        # agent mode settings
+        self._agent_enabled: bool = self._config['Agent'].getboolean('enabled', fallback=True)
+        self._show_tool_trace: bool = self._config['Agent'].getboolean('show_tool_trace', fallback=False)
 
         # logger
         self._logger = ConsoleLogger(TelegramBot.__name__, logging.DEBUG)
@@ -52,6 +62,14 @@ class TelegramBot:
         def show_summary(message):
             self.show_summary(message)
 
+        @self.bot.message_handler(commands=['mode'])
+        def switch_mode(message):
+            self.toggle_mode(message)
+
+        @self.bot.message_handler(commands=['tools'])
+        def show_tools(message):
+            self.show_available_tools(message)
+
         @self.bot.message_handler(content_types=['photo'])
         def handle_photo(message):
             self.process_photo(message)
@@ -80,13 +98,32 @@ class TelegramBot:
         response = f"📋 Резюме нашего диалога:\n\n{summary}"
         self.bot.reply_to(message, response)
 
+    def toggle_mode(self, message):
+        """Переключение между активным ИИ-агентом и пассивным ассистентом"""
+        self._agent_enabled = not self._agent_enabled
+        if self._agent_enabled:
+            response = '🤖 Включён режим активного ИИ-агента: мне доступны инструменты ' \
+                       '(расчёты электронных компонентов, генерация кода, память, анализ изображений).'
+        else:
+            response = '💬 Включён режим пассивного ассистента: инструменты выключены, ' \
+                       'отвечаю без вызова внешних функций.'
+        self._logger.info(f'User {message.from_user.id} switched agent mode to {self._agent_enabled}')
+        self.bot.reply_to(message, response)
+
+    def show_available_tools(self, message):
+        """Показать список доступных инструментов агента"""
+        lines = [f'• {name}' for name in self._tool_registry.names()]
+        response = '🔧 Доступные инструменты агента:\n\n' + '\n'.join(lines)
+        self.bot.reply_to(message, response)
+
     def send_welcome(self, message):
         self._logger.info(f'User {message.from_user.id} joined.')
         user = message.from_user
         if self._repositories.users.get_user(user.id) is None:
             self._repositories.users.add_user(user.id, user.first_name)
-            self.bot.reply_to(message, 'Добрый день! Я ИИ-ассистент и моя цель - '
+            self.bot.reply_to(message, 'Добрый день! Я ИИ-агент и моя цель - '
                                        'помогать инженерам в системах автоматизированного проектирования. '
+                                       'Я умею вызывать инструменты для точных расчётов и генерации кода. '
                                        'Чем я могу быть Вам полезен?')
         else:
             self.bot.reply_to(message, 'Наша работа уже начата и идёт полным ходом!')
@@ -97,7 +134,9 @@ class TelegramBot:
                                    '/help - Помощь\n'
                                    '/clear - Очистить контекст\n'
                                    '/stats - Статистика памяти\n'
-                                   '/summary - Показать резюме диалога')
+                                   '/summary - Показать резюме диалога\n'
+                                   '/mode - Режим: активный ИИ-агент / пассивный ассистент\n'
+                                   '/tools - Список инструментов агента')
 
     def process_photo(self, message):
         """Обработка изображений от пользователя"""
@@ -121,7 +160,6 @@ class TelegramBot:
 
             uri = FileUtils.image_to_base64_data_uri(file_path)
 
-            user_id = message.from_user.id
             message_text = message.caption if message.caption is not None else 'Опиши это изображение'
             self._process_message(user_id, message_text, is_photo_available=True, uri=uri)
 
@@ -133,12 +171,47 @@ class TelegramBot:
                 "Убедитесь, что vision модель правильно настроена."
             )
 
-        a = 5
-
     def reply(self, message):
         user_id = message.from_user.id
         message_text = message.text
         self._process_message(user_id, message_text)
+
+    def _get_last_image_uri(self, user_id: int) -> str | None:
+        """Возвращает data URI последнего изображения пользователя из диалога"""
+        dialog = self._repositories.user_messages.get_user_messages(user_id, limit=20)
+        if dialog:
+            for dialog_message in reversed(dialog):
+                if dialog_message.type == 'IMAGE' and dialog_message.is_user_input:
+                    return dialog_message.message
+        return None
+
+    def _build_system_prompt(self, user_id: int, message_text: str) -> str:
+        """Формирование системного промпта: роль, инструменты, время, резюме, RAG-контекст"""
+        if self._agent_enabled:
+            system_prompt = build_agent_system_prompt(self._tool_registry.descriptions())
+        else:
+            system_prompt = cad_prompt
+
+        current_date_time = datetime.now().strftime('%d %B %Y, %H:%M MSK')
+        system_prompt += f'\n\nТекущее время: {current_date_time}\n'
+
+        # add summary
+        user = self._repositories.users.get_user(user_id)
+        current_summary = user.summary
+        system_prompt += f'КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩИХ ДИАЛОГОВ\n\n {current_summary}\n\n'
+
+        # add RAG
+        long_term_context = self._long_term_memory.get_relevant_context(
+            user_id=user_id,
+            query=message_text,
+            n_results=3  # top-3 relevant memories
+        )
+        if long_term_context:
+            system_prompt += 'Ниже твои воспоминания из прошлого диалога с пользователем. ' \
+                             'Учти эти сообщения, если они релевантны запросу пользователя:'
+            system_prompt += f'\n\n{long_term_context}\n\n'
+
+        return system_prompt
 
     def _process_message(self, user_id: int, message_text: str, is_photo_available: bool = False, uri: str = ""):
         self._logger.info(f'Input message - user id: {user_id}, message: {message_text}')
@@ -149,23 +222,9 @@ class TelegramBot:
         user = self._repositories.users.get_user(user_id)
         current_summary = user.summary
 
-        # get relevant context from long-term memory
-        long_term_context = self._long_term_memory.get_relevant_context(
-            user_id=user_id,
-            query=message_text,
-            n_results=3  # top-3 relevant memories
-        )
-
-        # create dialog content with long-term memory
-        current_date_time = datetime.now().strftime('%d %B %Y, %H:%M MSK')
-        system_prompt = cad_prompt + f'\n\nТекущее время: {current_date_time}\n'
-        # add summary
-        system_prompt += f'КРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩИХ ДИАЛОГОВ\n\n {current_summary}\n\n'
-        # add RAG
-        if long_term_context:
-            system_prompt += 'Ниже твои воспоминания из прошлого диалога с пользователем. Учти эти сообщения, если они релевантны запросу пользователя:'
-            system_prompt += f'\n\n{long_term_context}\n\n'
+        system_prompt = self._build_system_prompt(user_id, message_text)
         messages = [{'role': 'system', 'content': system_prompt}]
+
         # add short-term memory (latest N messages)
         dialog = self._repositories.user_messages.get_user_messages(user_id)
         if dialog is None:
@@ -177,8 +236,23 @@ class TelegramBot:
             if dialog_message.type == 'IMAGE':
                 messages.append({'role': role, 'content': [{'type': 'image_url', 'image_url': dialog_message.message}]})
 
-        # generate response
-        response = self._llm.generate(messages)
+        # generate response: agent loop with tools or plain assistant response
+        if self._agent_enabled:
+            context = ToolContext(
+                user_id=user_id,
+                last_image_uri=uri if is_photo_available else self._get_last_image_uri(user_id),
+                long_term_memory=self._long_term_memory
+            )
+            agent_result = self._agent.run(messages, context)
+            response = agent_result.answer
+
+            self._logger.info(
+                f'Agent metrics: iterations={agent_result.iterations}, '
+                f'tool_calls={agent_result.tool_calls}, errors={agent_result.errors}, '
+                f'time={agent_result.elapsed_seconds:.2f}s, stopped_by={agent_result.stopped_reason}')
+        else:
+            response = self._llm.generate(messages)
+
         self._logger.info(f'Bot\'s response: {response}')
 
         # save response to long-term (RAG) and short-term (DB) memory
@@ -188,7 +262,7 @@ class TelegramBot:
             user_message=message_text,
             bot_response=response,
             metadata={
-                'timestamp': current_date_time,
+                'timestamp': datetime.now().strftime('%d %B %Y, %H:%M MSK'),
                 'message_length': len(message_text)
             }
         )
@@ -223,6 +297,13 @@ class TelegramBot:
         # send response to user
         self.bot.send_message(user_id, response)
 
+        # send tool trace for debugging/demonstration purposes
+        if self._agent_enabled and self._show_tool_trace:
+            trace = agent_result.trace_text()
+            if len(trace) > 4000:
+                trace = trace[:4000] + '…'
+            self.bot.send_message(user_id, trace)
+
     def run(self):
-        self._logger.info(f'AI CAD helper bot started')
+        self._logger.info(f'AI CAD agent bot started')
         self.bot.infinity_polling()

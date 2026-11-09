@@ -1,6 +1,9 @@
 import os
 from configparser import ConfigParser
 
+from ai.agent.loop import AgentLoop
+from ai.agent.registry import ToolRegistry
+from ai.agent.tools import create_default_tools
 from ai.llm import Llm
 from ai.long_term_memory import LongTermMemory
 from ai.summarizer import DialogSummarizer
@@ -33,6 +36,16 @@ if __name__ == '__main__':
     # summarizer
     summarizer = DialogSummarizer(llm, config)
     service_locator.add(DialogSummarizer.__name__, summarizer)
+
+    # agent tools
+    tool_registry = ToolRegistry()
+    for tool in create_default_tools(long_term_memory=long_term_memory, llm=llm):
+        tool_registry.register(tool)
+    service_locator.add(ToolRegistry.__name__, tool_registry)
+
+    # agent loop
+    agent = AgentLoop(llm, tool_registry, max_iterations=int(config['Agent']['max_iterations']))
+    service_locator.add(AgentLoop.__name__, agent)
 
     # bot
     bot = TelegramBot(service_locator)

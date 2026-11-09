@@ -107,6 +107,58 @@ class LongTermMemory:
 
         return context
 
+    def save_fact(self, user_id: int, text: str, metadata: dict = None):
+        """
+        Сохраняет отдельный факт в долговременную память (вызывается инструментом агента)
+
+        Args:
+            user_id: user ID
+            text: fact text
+            metadata: additional metadata
+        """
+        collection = self.get_collection(user_id)
+
+        embedding = self.embedder.encode(text).tolist()
+
+        if metadata is None:
+            metadata = {}
+        metadata.setdefault('type', 'fact')
+
+        doc_id = f"fact_{collection.count()}"
+        collection.add(
+            embeddings=[embedding],
+            documents=[text],
+            metadatas=[metadata],
+            ids=[doc_id]
+        )
+
+        self._logger.debug(f"Fact saved for user {user_id}")
+
+    def search_facts(self, user_id: int, query: str, n_results: int = 3) -> List[str]:
+        """
+        Семантический поиск по долговременной памяти (вызывается инструментом агента)
+
+        Args:
+            user_id: user ID
+            query: search query
+            n_results: number of results
+
+        Returns:
+            list of found memory documents
+        """
+        collection = self.get_collection(user_id)
+
+        if collection.count() == 0:
+            return []
+
+        query_embedding = self.embedder.encode(query).tolist()
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(n_results, collection.count())
+        )
+
+        return results['documents'][0] or []
+
     def clear_memory(self, user_id: int):
         """Clear long-term memory for user dialog"""
         try:
